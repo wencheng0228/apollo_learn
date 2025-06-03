@@ -36,6 +36,7 @@ namespace math {
 
 /**
  * @brief Linear interpolation between two points of type T.
+ * 两点之间线性插值
  * @param x0 The coordinate of the first point.
  * @param t0 The interpolation parameter of the first point.
  * @param x1 The coordinate of the second point.

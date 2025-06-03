@@ -48,6 +48,7 @@ namespace control {
  * @class Controller
  *
  * @brief base class for all controllers.
+ * 所有控制器的基类
  */
 class ControlTask {
  public:

@@ -211,6 +211,7 @@ PathPoint TrajectoryAnalyzer::FindMinDistancePoint(const TrajectoryPoint &p0,
                                                    const double y) const {
   // given the fact that the discretized trajectory is dense enough,
   // we assume linear trajectory between consecutive trajectory points.
+  // 线性插值后输出插值点的s长度
   auto dist_square = [&p0, &p1, &x, &y](const double s) {
     double px = common::math::lerp(p0.path_point().x(), p0.path_point().s(),
                                    p1.path_point().x(), p1.path_point().s(), s);

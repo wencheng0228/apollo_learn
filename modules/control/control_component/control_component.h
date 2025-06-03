@@ -51,95 +51,90 @@ namespace control {
  * pad data to compute throttle, brake and steer values.
  */
 class ControlComponent final : public apollo::cyber::TimerComponent {
-  friend class ControlTestBase;
+    friend class ControlTestBase;
 
- public:
-  ControlComponent();
-  bool Init() override;
+   public:
+    ControlComponent();
+    bool Init() override;
 
-  bool Proc() override;
+    bool Proc() override;
 
- private:
-  // Upon receiving pad message
-  void OnPad(const std::shared_ptr<PadMessage> &pad);
+   private:
+    // Upon receiving pad message
+    void OnPad(const std::shared_ptr<PadMessage> &pad);
 
-  void OnChassis(const std::shared_ptr<apollo::canbus::Chassis> &chassis);
+    void OnChassis(const std::shared_ptr<apollo::canbus::Chassis> &chassis);
 
-  void OnPlanning(
-      const std::shared_ptr<apollo::planning::ADCTrajectory> &trajectory);
+    void OnPlanning(const std::shared_ptr<apollo::planning::ADCTrajectory> &trajectory);
 
-  void OnPlanningCommandStatus(
-      const std::shared_ptr<external_command::CommandStatus>
-          &planning_command_status);
+    void OnPlanningCommandStatus(const std::shared_ptr<external_command::CommandStatus> &planning_command_status);
 
-  void OnLocalization(
-      const std::shared_ptr<apollo::localization::LocalizationEstimate>
-          &localization);
+    void OnLocalization(const std::shared_ptr<apollo::localization::LocalizationEstimate> &localization);
 
-  // Upon receiving monitor message
-  void OnMonitor(
-      const apollo::common::monitor::MonitorMessage &monitor_message);
+    // Upon receiving monitor message
+    void OnMonitor(const apollo::common::monitor::MonitorMessage &monitor_message);
 
-  common::Status ProduceControlCommand(ControlCommand *control_command);
-  common::Status CheckInput(LocalView *local_view);
-  common::Status CheckTimestamp(const LocalView &local_view);
-  common::Status CheckPad();
-  void ResetAndProduceZeroControlCommand(ControlCommand *control_command);
-  void GetVehiclePitchAngle(ControlCommand *control_command);
-  void CheckAutoMode(const canbus::Chassis *chassis);
-  void PublishControlInteractiveMsg();
+    common::Status ProduceControlCommand(ControlCommand *control_command);
+    common::Status CheckInput(LocalView *local_view);
+    common::Status CheckTimestamp(const LocalView &local_view);
+    common::Status CheckPad();
+    void ResetAndProduceZeroControlCommand(ControlCommand *control_command);
+    void GetVehiclePitchAngle(ControlCommand *control_command);
+    void CheckAutoMode(const canbus::Chassis *chassis);
+    void PublishControlInteractiveMsg();
 
- private:
-  apollo::cyber::Time init_time_;
+   private:
+    apollo::cyber::Time init_time_;
 
-  localization::LocalizationEstimate latest_localization_;
-  canbus::Chassis latest_chassis_;
-  planning::ADCTrajectory latest_trajectory_;
-  external_command::CommandStatus planning_command_status_;
-  PadMessage pad_msg_;
-  common::Header latest_replan_trajectory_header_;
+    localization::LocalizationEstimate latest_localization_;
+    canbus::Chassis latest_chassis_;
+    planning::ADCTrajectory latest_trajectory_;
+    external_command::CommandStatus planning_command_status_;
+    PadMessage pad_msg_;
+    common::Header latest_replan_trajectory_header_;
 
-  ControlTaskAgent control_task_agent_;
+    ControlTaskAgent control_task_agent_;
 
-  bool estop_ = false;
-  std::string estop_reason_;
-  bool pad_received_ = false;
+    bool estop_ = false;
+    std::string estop_reason_;
+    bool pad_received_ = false;
 
-  unsigned int status_lost_ = 0;
-  unsigned int status_sanity_check_failed_ = 0;
-  unsigned int total_status_lost_ = 0;
-  unsigned int total_status_sanity_check_failed_ = 0;
+    unsigned int status_lost_ = 0;
+    unsigned int status_sanity_check_failed_ = 0;
+    unsigned int total_status_lost_ = 0;
+    unsigned int total_status_sanity_check_failed_ = 0;
 
-  ControlPipeline control_pipeline_;
+    // 在 GetProtoFromFile 函数中解析出来赋值给 control_pipeline_
+    ControlPipeline control_pipeline_;
 
-  std::mutex mutex_;
+    std::mutex mutex_;
 
-  std::shared_ptr<cyber::Reader<apollo::canbus::Chassis>> chassis_reader_;
-  std::shared_ptr<cyber::Reader<PadMessage>> pad_msg_reader_;
-  std::shared_ptr<cyber::Reader<apollo::localization::LocalizationEstimate>>
-      localization_reader_;
-  std::shared_ptr<cyber::Reader<apollo::planning::ADCTrajectory>>
-      trajectory_reader_;
-  std::shared_ptr<cyber::Reader<apollo::external_command::CommandStatus>>
-      planning_command_status_reader_;
+    std::shared_ptr<cyber::Reader<apollo::canbus::Chassis>> chassis_reader_;
+    //控制模式的订阅者，DrivingAction枚举
+    std::shared_ptr<cyber::Reader<PadMessage>> pad_msg_reader_;
+    std::shared_ptr<cyber::Reader<apollo::localization::LocalizationEstimate>> localization_reader_;
+    //轨迹消息订阅者
+    std::shared_ptr<cyber::Reader<apollo::planning::ADCTrajectory>> trajectory_reader_;
+    //规划状态的订阅者，状态是枚举 CommandStatusType
+    std::shared_ptr<cyber::Reader<apollo::external_command::CommandStatus>> planning_command_status_reader_;
 
-  std::shared_ptr<cyber::Writer<ControlCommand>> control_cmd_writer_;
-  // when using control submodules
-  std::shared_ptr<cyber::Writer<LocalView>> local_view_writer_;
+    std::shared_ptr<cyber::Writer<ControlCommand>> control_cmd_writer_;
+    // when using control submodules
+    std::shared_ptr<cyber::Writer<LocalView>> local_view_writer_;
 
-  std::shared_ptr<cyber::Writer<ControlInteractiveMsg>>
-      control_interactive_writer_;
+    //控制模块和上层的交互消息的发布者：是否需要replan等
+    std::shared_ptr<cyber::Writer<ControlInteractiveMsg>> control_interactive_writer_;
 
-  common::monitor::MonitorLogBuffer monitor_logger_buffer_;
+    common::monitor::MonitorLogBuffer monitor_logger_buffer_;
 
-  LocalView local_view_;
+    LocalView local_view_;
 
-  std::shared_ptr<DependencyInjector> injector_;
+    std::shared_ptr<DependencyInjector> injector_;
 
-  double previous_steering_command_ = 0.0;
+    double previous_steering_command_ = 0.0;
 
-  bool is_auto_ = false;
-  bool from_else_to_auto_ = false;
+    bool is_auto_ = false;
+    bool from_else_to_auto_ = false;
 };
 
 CYBER_REGISTER_COMPONENT(ControlComponent)
