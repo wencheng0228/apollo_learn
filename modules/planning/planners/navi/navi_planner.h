@@ -56,6 +56,7 @@ namespace planning {
  * mode by setting "FLAGS_use_navigation_mode" to "true") and do not use it in
  * standard mode.
  */
+// 于相对地图的规划器
 class NaviPlanner : public PlannerWithReferenceLine {
  public:
   virtual ~NaviPlanner() = default;

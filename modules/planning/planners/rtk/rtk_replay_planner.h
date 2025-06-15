@@ -41,6 +41,7 @@ namespace planning {
  *        outputs proper segment of the trajectory according to vehicle
  * position.
  */
+//于录制轨迹的规划器
 class RTKReplayPlanner : public PlannerWithReferenceLine {
  public:
   /**

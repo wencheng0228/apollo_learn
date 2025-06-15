@@ -47,6 +47,7 @@ using apollo::storytelling::Stories;
 bool PlanningComponent::Init() {
   injector_ = std::make_shared<DependencyInjector>();
 
+  // use_navigation_mode 默认为false
   if (FLAGS_use_navigation_mode) {
     planning_base_ = std::make_unique<NaviPlanning>(injector_);
   } else {
@@ -229,6 +230,7 @@ bool PlanningComponent::Proc(
   }
 
   ADCTrajectory adc_trajectory_pb;
+  // 开始规划轨迹
   planning_base_->RunOnce(local_view_, &adc_trajectory_pb);
   auto start_time = adc_trajectory_pb.header().timestamp_sec();
   common::util::FillHeader(node_->Name(), &adc_trajectory_pb);

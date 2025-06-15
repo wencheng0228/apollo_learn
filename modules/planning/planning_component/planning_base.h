@@ -56,57 +56,52 @@ using apollo::common::math::Vec2d;
  * @brief PlanningBase module main class.
  */
 class PlanningBase {
- public:
-  PlanningBase() = delete;
+   public:
+    PlanningBase() = delete;
 
-  explicit PlanningBase(const std::shared_ptr<DependencyInjector>& injector);
+    explicit PlanningBase(const std::shared_ptr<DependencyInjector>& injector);
 
-  virtual ~PlanningBase();
+    virtual ~PlanningBase();
 
-  virtual apollo::common::Status Init(const PlanningConfig& config);
+    virtual apollo::common::Status Init(const PlanningConfig& config);
 
-  virtual std::string Name() const = 0;
+    virtual std::string Name() const = 0;
 
-  virtual void RunOnce(const LocalView& local_view,
-                       ADCTrajectory* const adc_trajectory) = 0;
+    virtual void RunOnce(const LocalView& local_view, ADCTrajectory* const adc_trajectory) = 0;
 
-  /**
-   * @brief Plan the trajectory given current vehicle state
-   */
-  virtual apollo::common::Status Plan(
-      const double current_time_stamp,
-      const std::vector<common::TrajectoryPoint>& stitching_trajectory,
-      ADCTrajectory* const trajectory) = 0;
+    /**
+     * @brief Plan the trajectory given current vehicle state
+     */
+    virtual apollo::common::Status Plan(const double current_time_stamp,
+                                        const std::vector<common::TrajectoryPoint>& stitching_trajectory,
+                                        ADCTrajectory* const trajectory) = 0;
 
-  /**
-   * @brief Check if vehicle reaches the end point of the RoutingRequest.
-   *
-   * @return True if vehicle reaches the end point.
-   */
-  bool IsPlanningFinished(
-      const ADCTrajectory::TrajectoryType& current_trajectory_type) const;
+    /**
+     * @brief Check if vehicle reaches the end point of the RoutingRequest.
+     *
+     * @return True if vehicle reaches the end point.
+     */
+    bool IsPlanningFinished(const ADCTrajectory::TrajectoryType& current_trajectory_type) const;
 
-  bool GenerateWidthOfLane(const Vec2d& current_location, Vec2d& left_point,
-                           Vec2d& right_point);
+    bool GenerateWidthOfLane(const Vec2d& current_location, Vec2d& left_point, Vec2d& right_point);
 
- protected:
-  virtual void FillPlanningPb(const double timestamp,
-                              ADCTrajectory* const trajectory_pb);
+   protected:
+    virtual void FillPlanningPb(const double timestamp, ADCTrajectory* const trajectory_pb);
 
-  void LoadPlanner();
+    void LoadPlanner();
 
-  LocalView local_view_;
-  const hdmap::HDMap* hdmap_ = nullptr;
+    LocalView local_view_;
+    const hdmap::HDMap* hdmap_ = nullptr;
 
-  double start_time_ = 0.0;
-  size_t seq_num_ = 0;
+    double start_time_ = 0.0;
+    size_t seq_num_ = 0;
 
-  PlanningConfig config_;
-  TrafficDecider traffic_decider_;
-  std::unique_ptr<Frame> frame_;
-  std::shared_ptr<Planner> planner_;
-  std::unique_ptr<PublishableTrajectory> last_publishable_trajectory_;
-  std::shared_ptr<DependencyInjector> injector_;
+    PlanningConfig config_;
+    TrafficDecider traffic_decider_;
+    std::unique_ptr<Frame> frame_;  // Frame：保存一个规划周期内所有数据的类
+    std::shared_ptr<Planner> planner_;
+    std::unique_ptr<PublishableTrajectory> last_publishable_trajectory_;
+    std::shared_ptr<DependencyInjector> injector_;
 };
 
 }  // namespace planning

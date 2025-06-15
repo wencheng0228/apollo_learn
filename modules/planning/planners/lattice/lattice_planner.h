@@ -34,6 +34,7 @@
 namespace apollo {
 namespace planning {
 
+  //于网格算法的规划器
 class LatticePlanner : public PlannerWithReferenceLine {
  public:
   virtual ~LatticePlanner() = default;
