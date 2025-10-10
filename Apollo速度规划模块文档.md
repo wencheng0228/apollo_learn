@@ -616,57 +616,497 @@ x = [s_0, v_0, a_0, s_1, v_1, a_1, ..., s_n, v_n, a_n]^T
 ```
 
 **目标函数**：
+
+完整的目标函数包含以下各项（从代码中提取）：
+
+$$
+\begin{aligned}
+J(\mathbf{x}) = &\underbrace{\sum_{i=0}^{n-1} w_{s\_ref} (s_i - s_{ref,i})^2}_{\text{位置参考跟踪代价}} \\
+&+ \underbrace{\sum_{i=0}^{n-1} (w_{v\_ref,i} + penalty_{v,i}) (v_i - v_{ref,i})^2}_{\text{速度参考跟踪代价}} \\
+&+ \underbrace{\sum_{i=0}^{n-1} w_{acc} a_i^2}_{\text{加速度平滑代价}} \\
+&+ \underbrace{\sum_{i=0}^{n-2} w_{jerk} \left(\frac{a_{i+1} - a_i}{\Delta t}\right)^2}_{\text{加加速度（Jerk）代价}} \\
+&+ \underbrace{w_{end\_s}(s_{n-1} - s_{end\_ref})^2}_{\text{末端位置代价}} \\
+&+ \underbrace{w_{end\_v}(v_{n-1} - v_{end\_ref})^2}_{\text{末端速度代价}} \\
+&+ \underbrace{w_{end\_a}(a_{n-1} - a_{end\_ref})^2}_{\text{末端加速度代价}}
+\end{aligned}
+$$
+
+**各项详细解释**：
+
+**1. 位置参考跟踪代价** (\(w_{s\_ref} \sum (s_i - s_{ref,i})^2\))
+```cpp
+// 代码位置：CalculateKernel()
+columns[i].emplace_back(i, weight_x_ref_ / (scale_factor_[0] * scale_factor_[0]));
+
+// 对应线性项：CalculateOffset()
+q->at(i) += -2.0 * weight_x_ref_ * x_ref_[i] / scale_factor_[0];
 ```
-minimize: ∑(w_jerk × jerk_i² + w_acc × acc_i² + w_speed × (v_i - v_ref)²)
+- **含义**：使车辆尽量跟随参考s曲线
+- **权重**：`weight_x_ref` (通常为10.0)
+- **参考值**：`x_ref_[i]` 通常设为期望到达的距离
+- **效果**：鼓励车辆尽量前进
+
+**2. 速度参考跟踪代价** (\(\sum (w_{v\_ref,i} + penalty_{v,i}) (v_i - v_{ref,i})^2\))
+```cpp
+// 代码位置：CalculateKernel()
+columns[n + i].emplace_back(n + i,
+    (weight_dx_ref_[i] + penalty_dx_[i]) / (scale_factor_[1] * scale_factor_[1]));
+
+// 对应线性项：CalculateOffset()
+q->at(n + i) += -2.0 * weight_dx_ref_[i] * dx_ref_[i] / scale_factor_[1];
 ```
+- **含义**：使速度尽量接近参考速度
+- **权重**：`weight_dx_ref_[i]` (通常为10.0)
+- **额外惩罚**：`penalty_dx_[i]` 在曲率大的地方增加（鼓励减速）
+- **参考值**：`dx_ref_[i]` 通常设为巡航速度或速度限制
+- **效果**：保持稳定的巡航速度
+
+**3. 加速度平滑代价** (\(w_{acc} \sum a_i^2\))
+```cpp
+// 代码位置：CalculateKernel()
+// 第一个点和最后一个点
+columns[2*n].emplace_back(2*n, 
+    (weight_ddx_ + weight_dddx_/delta_s_square) / (scale_factor_[2] * scale_factor_[2]));
+
+// 中间点（包含Jerk项的耦合）
+columns[2*n + i].emplace_back(2*n + i, 
+    (weight_ddx_ + 2.0*weight_dddx_/delta_s_square) / (scale_factor_[2] * scale_factor_[2]));
+```
+- **含义**：惩罚大的加速度，提高乘坐舒适性
+- **权重**：`weight_ddx_` (通常为100.0-500.0)
+- **效果**：减少急加速和急减速
+
+**4. 加加速度（Jerk）代价** (\(w_{jerk} \sum (jerk_i)^2\))
+```cpp
+// 代码位置：CalculateKernel()
+// Jerk的定义：jerk_i = (a_{i+1} - a_i) / Δt
+// 展开为：jerk_i² = (a_{i+1}² - 2*a_{i+1}*a_i + a_i²) / Δt²
+
+// 对角项贡献（已包含在加速度项中）
+weight_dddx_ / delta_s_square  // 端点
+2.0 * weight_dddx_ / delta_s_square  // 中间点
+
+// 非对角项（耦合项）
+columns[2*n + i].emplace_back(2*n + i + 1,
+    -2.0 * weight_dddx_ / delta_s_square / (scale_factor_[2] * scale_factor_[2]));
+```
+- **含义**：惩罚加速度的变化率，提高平滑性
+- **权重**：`weight_dddx_` (通常为100.0-1000.0)
+- **效果**：避免加速度突变，最重要的平滑性指标
+
+**5. 末端状态代价** (末端约束)
+```cpp
+// 代码位置：CalculateKernel() - 末端点额外权重
+columns[n - 1] += weight_end_state_[0]  // 末端位置
+columns[2*n - 1] += weight_end_state_[1]  // 末端速度
+columns[3*n - 1] += weight_end_state_[2]  // 末端加速度
+
+// 对应线性项：CalculateOffset()
+q->at(n - 1) += -2.0 * weight_end_state_[0] * end_state_ref_[0];
+q->at(2*n - 1) += -2.0 * weight_end_state_[1] * end_state_ref_[1];
+q->at(3*n - 1) += -2.0 * weight_end_state_[2] * end_state_ref_[2];
+```
+- **含义**：约束末端状态接近期望值
+- **权重**：`weight_end_state_` (通常为10.0)
+- **参考值**：`end_state_ref_` (通常为 {s_end, v_cruise, 0})
+- **效果**：确保末端状态合理
+
+**6. 曲率惩罚项** (\(penalty_{v,i}\))
+```cpp
+// 代码中penalty_dx的计算：
+penalty_dx_[i] = std::fabs(path_point.kappa()) * config.kappa_penalty_weight();
+```
+- **含义**：在曲率大的地方增加速度惩罚，鼓励减速
+- **权重**：`kappa_penalty_weight` (通常为100.0)
+- **效果**：弯道自动减速
+
+**QP标准形式的完整矩阵表示**：
+
+$$
+J(\mathbf{x}) = \frac{1}{2} \mathbf{x}^T \mathbf{H} \mathbf{x} + \mathbf{f}^T \mathbf{x}
+$$
+
+其中决策变量：
+$$
+\mathbf{x} = [s_0, s_1, \ldots, s_{n-1}, v_0, v_1, \ldots, v_{n-1}, a_0, a_1, \ldots, a_{n-1}]^T
+$$
+
+**Hessian矩阵 H 的构造（3n × 3n）**：
+
+$$
+\mathbf{H} = \begin{bmatrix}
+\mathbf{H}_s & \mathbf{0} & \mathbf{0} \\
+\mathbf{0} & \mathbf{H}_v & \mathbf{0} \\
+\mathbf{0} & \mathbf{0} & \mathbf{H}_a + \mathbf{H}_{jerk}
+\end{bmatrix}
+$$
 
 其中：
-- `jerk_i = (a_i - a_{i-1}) / Δt`
-- 最小化加加速度使得行驶更加平滑
-- 最小化加速度减少乘客不适感
-- 最小化速度偏差使得接近期望速度
+- $\mathbf{H}_s = \text{diag}(w_{s\_ref}, \ldots, w_{s\_ref} + w_{end\_s})$ (位置权重)
+- $\mathbf{H}_v = \text{diag}(w_{v\_ref,0} + penalty_0, \ldots, w_{v\_ref,n-1} + penalty_{n-1} + w_{end\_v})$ (速度权重)
+- $\mathbf{H}_a = \text{diag}(w_{acc} + w_{jerk}/\Delta t^2, \ldots, w_{acc} + 2w_{jerk}/\Delta t^2, \ldots, w_{acc} + w_{jerk}/\Delta t^2 + w_{end\_a})$ (加速度权重)
+- $\mathbf{H}_{jerk}$ 是三对角矩阵，表示Jerk的耦合项
+
+**Jerk耦合矩阵**：
+$$
+\mathbf{H}_{jerk} = \frac{w_{jerk}}{\Delta t^2} \begin{bmatrix}
+1 & -1 & 0 & \cdots & 0 \\
+-1 & 2 & -1 & \cdots & 0 \\
+0 & -1 & 2 & \ddots & \vdots \\
+\vdots & \ddots & \ddots & \ddots & -1 \\
+0 & \cdots & 0 & -1 & 1
+\end{bmatrix}_{n \times n}
+$$
+
+**线性项 f 的构造（3n × 1）**：
+
+$$
+\mathbf{f} = \begin{bmatrix}
+-w_{s\_ref} s_{ref,0}, \ldots, -w_{s\_ref} s_{ref,n-2}, -(w_{s\_ref} s_{ref,n-1} + w_{end\_s} s_{end\_ref}) \\
+-w_{v\_ref,0} v_{ref,0}, \ldots, -(w_{v\_ref,n-1} v_{ref,n-1} + w_{end\_v} v_{end\_ref}) \\
+0, 0, \ldots, -w_{end\_a} a_{end\_ref}
+\end{bmatrix}^T
+$$
+
+**代码实现对应**：
+
+```cpp
+// Hessian矩阵H的构造
+void PiecewiseJerkSpeedProblem::CalculateKernel(...) {
+  // 1. s的对角元素
+  for (int i = 0; i < n - 1; ++i) {
+    H[i,i] = weight_x_ref_;
+  }
+  H[n-1, n-1] = weight_x_ref_ + weight_end_state_[0];
+  
+  // 2. v的对角元素（包含曲率惩罚）
+  for (int i = 0; i < n - 1; ++i) {
+    H[n+i, n+i] = weight_dx_ref_[i] + penalty_dx_[i];
+  }
+  H[2n-1, 2n-1] = weight_dx_ref_[n-1] + penalty_dx_[n-1] + weight_end_state_[1];
+  
+  // 3. a的对角元素（包含Jerk贡献）
+  H[2n, 2n] = weight_ddx_ + weight_dddx_/Δt²;  // 第一个点
+  for (int i = 1; i < n - 1; ++i) {
+    H[2n+i, 2n+i] = weight_ddx_ + 2.0*weight_dddx_/Δt²;  // 中间点
+  }
+  H[3n-1, 3n-1] = weight_ddx_ + weight_dddx_/Δt² + weight_end_state_[2];  // 最后点
+  
+  // 4. Jerk的非对角元素
+  for (int i = 0; i < n - 1; ++i) {
+    H[2n+i, 2n+i+1] = -2.0 * weight_dddx_/Δt²;  // a_i 和 a_{i+1} 的耦合
+  }
+}
+
+// 线性项f的构造
+void PiecewiseJerkSpeedProblem::CalculateOffset(std::vector<c_float>* q) {
+  // 1. s的线性项
+  for (int i = 0; i < n; ++i) {
+    q[i] = -2.0 * weight_x_ref_ * x_ref_[i];
+  }
+  
+  // 2. v的线性项
+  for (int i = 0; i < n; ++i) {
+    q[n + i] = -2.0 * weight_dx_ref_[i] * dx_ref_[i];
+  }
+  
+  // 3. 末端状态线性项
+  q[n - 1] += -2.0 * weight_end_state_[0] * end_state_ref_[0];
+  q[2*n - 1] += -2.0 * weight_end_state_[1] * end_state_ref_[1];
+  q[3*n - 1] += -2.0 * weight_end_state_[2] * end_state_ref_[2];
+}
+```
+
+**数值示例**（假设n=3个点）：
+
+输入参数：
+```cpp
+weight_x_ref = 10.0
+weight_dx_ref = [10.0, 10.0, 10.0]
+weight_ddx = 100.0
+weight_dddx = 1000.0
+weight_end_state = [10.0, 10.0, 10.0]
+penalty_dx = [0.0, 50.0, 0.0]  // 中间点曲率大
+Δt = 0.1s
+```
+
+则Hessian矩阵对角元素：
+```
+H[0,0] = 10.0 (s_0)
+H[1,1] = 10.0 (s_1)
+H[2,2] = 20.0 (s_2, 包含末端权重)
+
+H[3,3] = 10.0 (v_0)
+H[4,4] = 60.0 (v_1, 包含曲率惩罚50.0)
+H[5,5] = 20.0 (v_2, 包含末端权重)
+
+H[6,6] = 100.0 + 1000.0/0.01 = 100100.0 (a_0)
+H[7,7] = 100.0 + 2*1000.0/0.01 = 200100.0 (a_1)
+H[8,8] = 100.0 + 1000.0/0.01 + 10.0 = 100110.0 (a_2)
+
+H[6,7] = H[7,6] = -2*1000.0/0.01 = -200000.0 (a_0与a_1耦合)
+H[7,8] = H[8,7] = -200000.0 (a_1与a_2耦合)
+```
 
 **约束条件**：
 
 1. **运动学约束**：
+```cpp
+// 代码位置：CalculateAffineConstraint()
+
+// 速度连续性：v_{i+1} = v_i + 0.5*Δt*a_i + 0.5*Δt*a_{i+1}
+// 代码：
+variables[n + i].emplace_back(constraint_index, -1.0 * scale_factor_[2]);
+variables[n + i + 1].emplace_back(constraint_index, 1.0 * scale_factor_[2]);
+variables[2*n + i].emplace_back(constraint_index, -0.5 * delta_s_ * scale_factor_[1]);
+variables[2*n + i + 1].emplace_back(constraint_index, -0.5 * delta_s_ * scale_factor_[1]);
 ```
-s_{i+1} = s_i + v_i × Δt + 0.5 × a_i × Δt²
-v_{i+1} = v_i + a_i × Δt
+
+$$
+v_{i+1} = v_i + \frac{1}{2}(a_i + a_{i+1}) \Delta t
+$$
+
+```cpp
+// 位置连续性：s_{i+1} = s_i + Δt*v_i + (1/3)Δt²*a_i + (1/6)Δt²*a_{i+1}
+// 代码：
+variables[i].emplace_back(constraint_index, -1.0 * scale_factor_[1] * scale_factor_[2]);
+variables[i + 1].emplace_back(constraint_index, 1.0 * scale_factor_[1] * scale_factor_[2]);
+variables[n + i].emplace_back(constraint_index, -delta_s_ * scale_factor_[0] * scale_factor_[2]);
+variables[2*n + i].emplace_back(constraint_index, -delta_s_sq_/3.0 * scale_factor_[0] * scale_factor_[1]);
+variables[2*n + i + 1].emplace_back(constraint_index, -delta_s_sq_/6.0 * scale_factor_[0] * scale_factor_[1]);
 ```
+
+$$
+s_{i+1} = s_i + v_i \Delta t + \frac{1}{3} a_i \Delta t^2 + \frac{1}{6} a_{i+1} \Delta t^2
+$$
 
 2. **动力学边界约束**：
-```
-0 ≤ v_i ≤ v_max
-a_min ≤ a_i ≤ a_max
-jerk_min ≤ jerk_i ≤ jerk_max
+
+```cpp
+// 代码位置：CalculateAffineConstraint() - 变量边界
+// s的边界
+for (int i = 0; i < n; ++i) {
+  lower_bounds[i] = x_bounds_[i].first;   // s_min (通常为0)
+  upper_bounds[i] = x_bounds_[i].second;  // s_max (路径长度)
+}
+
+// v的边界
+for (int i = 0; i < n; ++i) {
+  lower_bounds[n + i] = dx_bounds_[i].first;   // v_min (通常为0)
+  upper_bounds[n + i] = dx_bounds_[i].second;  // v_max (速度限制)
+}
+
+// a的边界
+for (int i = 0; i < n; ++i) {
+  lower_bounds[2*n + i] = ddx_bounds_[i].first;   // a_min (最大减速度)
+  upper_bounds[2*n + i] = ddx_bounds_[i].second;  // a_max (最大加速度)
+}
 ```
 
-3. **ST边界约束**：
-```
-对于STOP/YIELD边界: s_i ≤ s_boundary_upper(t_i)
-对于OVERTAKE边界:   s_i ≥ s_boundary_lower(t_i)
+$$
+\begin{aligned}
+0 &\leq s_i \leq s_{max}(t_i) \\
+0 &\leq v_i \leq v_{max}(t_i) \\
+a_{min} &\leq a_i \leq a_{max}
+\end{aligned}
+$$
+
+3. **加加速度（Jerk）约束**：
+
+```cpp
+// 代码位置：CalculateAffineConstraint()
+// jerk_i = (a_{i+1} - a_i) / Δt
+for (int i = 0; i + 1 < n; ++i) {
+  variables[2*n + i].emplace_back(constraint_index, -1.0);
+  variables[2*n + i + 1].emplace_back(constraint_index, 1.0);
+  lower_bounds[constraint_index] = dddx_bound_.first * delta_s_;   // jerk_min * Δt
+  upper_bounds[constraint_index] = dddx_bound_.second * delta_s_;  // jerk_max * Δt
+}
 ```
 
-4. **速度限制约束**：
-```
-v_i ≤ speed_limit(s_i)
+$$
+jerk_{min} \Delta t \leq a_{i+1} - a_i \leq jerk_{max} \Delta t
+$$
+
+4. **ST边界约束**：
+
+ST边界通过**变量边界**实现，而非单独的约束：
+
+```cpp
+// 在PiecewiseJerkSpeedOptimizer::Process()中设置
+for (int i = 0; i < num_of_knots; ++i) {
+  double curr_t = i * delta_t;
+  double s_lower_bound = 0.0;
+  double s_upper_bound = total_length;
+  
+  // 遍历所有ST边界
+  for (const STBoundary* boundary : st_graph_data.st_boundaries()) {
+    double s_lower = 0.0;
+    double s_upper = 0.0;
+    if (!boundary->GetUnblockSRange(curr_t, &s_upper, &s_lower)) {
+      continue;
+    }
+    
+    switch (boundary->boundary_type()) {
+      case STBoundary::STOP:
+      case STBoundary::YIELD:
+        s_upper_bound = std::fmin(s_upper_bound, s_upper);  // 不能超过障碍物
+        break;
+      case STBoundary::FOLLOW:
+        s_upper_bound = std::fmin(s_upper_bound, s_upper);
+        break;
+      case STBoundary::OVERTAKE:
+        s_lower_bound = std::fmax(s_lower_bound, s_lower);  // 必须超过障碍物
+        break;
+    }
+  }
+  
+  s_bounds[i] = {s_lower_bound, s_upper_bound};
+}
+
+// 然后设置到QP问题
+qp_problem.set_x_bounds(s_bounds);
 ```
 
-5. **初始状态约束**：
+$$
+\text{对于STOP/YIELD边界: } s_i \leq s_{boundary\_upper}(t_i)
+$$
+$$
+\text{对于OVERTAKE边界: } s_i \geq s_{boundary\_lower}(t_i)
+$$
+
+5. **速度限制约束**：
+
+```cpp
+// 在PiecewiseJerkSpeedOptimizer::Process()中设置
+const SpeedLimit& speed_limit = st_graph_data.speed_limit();
+std::vector<std::pair<double, double>> s_dot_bounds;
+
+for (int i = 0; i < num_of_knots; ++i) {
+  double curr_t = i * delta_t;
+  SpeedPoint sp;
+  reference_speed_data.EvaluateByTime(curr_t, &sp);
+  const double path_s = sp.s();
+  
+  // 获取该位置的速度限制
+  double v_upper_bound = FLAGS_planning_upper_speed_limit;
+  v_upper_bound = std::fmin(speed_limit.GetSpeedLimitByS(path_s), v_upper_bound);
+  
+  s_dot_bounds.emplace_back(0.0, std::fmax(v_upper_bound, 0.0));
+}
+
+// 设置到QP问题
+qp_problem.set_dx_bounds(std::move(s_dot_bounds));
 ```
-s_0 = s_init
-v_0 = v_init
-a_0 = a_init
+
+$$
+0 \leq v_i \leq \min(v_{map}(s_i), v_{curvature}(s_i), v_{upper\_limit})
+$$
+
+6. **初始状态约束**：
+
+```cpp
+// 代码位置：CalculateAffineConstraint()
+// 通过等式约束实现
+variables[0].emplace_back(constraint_index, 1.0);
+lower_bounds[constraint_index] = x_init_[0];  // s_0 = s_init
+upper_bounds[constraint_index] = x_init_[0];
+
+variables[n].emplace_back(constraint_index, 1.0);
+lower_bounds[constraint_index] = x_init_[1];  // v_0 = v_init
+upper_bounds[constraint_index] = x_init_[1];
+
+variables[2*n].emplace_back(constraint_index, 1.0);
+lower_bounds[constraint_index] = x_init_[2];  // a_0 = a_init
+upper_bounds[constraint_index] = x_init_[2];
+```
+
+$$
+\begin{cases}
+s_0 = s_{init} \\
+v_0 = v_{init} \\
+a_0 = a_{init}
+\end{cases}
+$$
+
+**完整的QP问题构造总结**：
+
+```cpp
+// 从代码层面理解QP问题的完整构造过程
+
+// Step 1: 创建QP问题
+PiecewiseJerkSpeedProblem qp_problem(num_of_knots, delta_t, init_s);
+
+// Step 2: 设置目标函数权重
+qp_problem.set_weight_ddx(config_.acc_weight());           // w_acc = 100.0
+qp_problem.set_weight_dddx(config_.jerk_weight());         // w_jerk = 1000.0
+
+// Step 3: 设置位置参考（鼓励前进）
+std::vector<double> x_ref(num_of_knots, total_length);    // 期望走完全程
+qp_problem.set_x_ref(config_.ref_s_weight(), x_ref);      // w_s_ref = 10.0
+
+// Step 4: 设置速度参考（保持巡航）
+std::vector<double> dx_ref(num_of_knots, cruise_speed);   // 期望巡航速度
+std::vector<double> dx_ref_weight(num_of_knots, config_.ref_v_weight());  // w_v_ref = 10.0
+qp_problem.set_dx_ref(dx_ref_weight, dx_ref);
+
+// Step 5: 设置曲率惩罚（弯道减速）
+std::vector<double> penalty_dx(num_of_knots);
+for (int i = 0; i < num_of_knots; ++i) {
+  PathPoint path_point = path_data.GetPathPointWithPathS(s_i);
+  penalty_dx[i] = std::fabs(path_point.kappa()) * config_.kappa_penalty_weight();
+}
+qp_problem.set_penalty_dx(penalty_dx);
+
+// Step 6: 设置变量边界约束
+qp_problem.set_x_bounds(s_bounds);        // 位置边界（ST边界）
+qp_problem.set_dx_bounds(v_bounds);       // 速度边界（速度限制）
+qp_problem.set_ddx_bounds(a_min, a_max);  // 加速度边界（动力学）
+qp_problem.set_dddx_bound(jerk_bound);    // Jerk边界
+
+// Step 7: 求解
+bool success = qp_problem.Optimize();
+
+// Step 8: 提取结果
+const std::vector<double>& s = qp_problem.opt_x();
+const std::vector<double>& v = qp_problem.opt_dx();
+const std::vector<double>& a = qp_problem.opt_ddx();
+```
+
+**QP问题规模**（以80个点为例）：
+
+```
+决策变量数: 3 × 80 = 240
+  ├─ s: 80个
+  ├─ v: 80个
+  └─ a: 80个
+
+约束数量: 
+  ├─ 变量边界: 240个
+  ├─ 初始状态: 3个
+  ├─ 速度连续性: 79个
+  ├─ 位置连续性: 79个
+  ├─ Jerk约束: 79个
+  └─ 总计: ~480个约束
+
+Hessian矩阵非零元: 
+  ├─ 对角元素: 240个
+  ├─ Jerk耦合: 79个
+  └─ 总计: 319个非零元（稀疏矩阵）
+
+OSQP求解时间: 5-20ms（取决于初值和约束）
 ```
 
 **优点**：
-- 求解速度快
+- 求解速度快（凸二次规划）
 - 解的质量高，平滑性好
 - 适合实时系统
+- 代码实现清晰，易于调试
 
 **缺点**：
 - 只能处理凸问题
 - 需要合理的初始解
+- 无法处理复杂的非线性约束（需要NLP）
 
 #### 5.2.3 非线性优化算法（NLP）
 
@@ -853,9 +1293,252 @@ v_curv = √(a_lateral_max / |κ|)
 - a_lateral_max 是最大横向加速度（通常为 4 m/s²）
 ```
 
-## 6. 主要模块详解
+## 6. QP问题构造详解
 
-### 6.1 SpeedBoundsDecider（速度边界决策器）
+### 6.1 目标函数代码解析
+
+从代码层面完整理解QP目标函数的构造。
+
+#### 6.1.1 完整目标函数
+
+根据代码实现，完整的目标函数为：
+
+$$
+\begin{aligned}
+J = &\sum_{i=0}^{n-1} w_{s} (s_i - s_{ref,i})^2 
+    &&\text{← 位置跟踪} \\
+  + &\sum_{i=0}^{n-1} (w_{v,i} + p_{\kappa,i}) (v_i - v_{ref,i})^2 
+    &&\text{← 速度跟踪+曲率惩罚} \\
+  + &\sum_{i=0}^{n-1} w_a a_i^2 
+    &&\text{← 加速度平滑} \\
+  + &\sum_{i=0}^{n-2} w_j \left(\frac{a_{i+1} - a_i}{\Delta t}\right)^2 
+    &&\text{← Jerk平滑（最重要）} \\
+  + &w_{end,s}(s_{n-1} - s_{end})^2 
+    &&\text{← 末端位置} \\
+  + &w_{end,v}(v_{n-1} - v_{end})^2 
+    &&\text{← 末端速度} \\
+  + &w_{end,a}(a_{n-1} - a_{end})^2 
+    &&\text{← 末端加速度}
+\end{aligned}
+$$
+
+#### 6.1.2 权重设置代码
+
+```cpp
+// 在PiecewiseJerkSpeedOptimizer::Process()中设置
+
+// 基础权重
+qp_problem.set_weight_ddx(config_.acc_weight());      // 100.0 - 500.0
+qp_problem.set_weight_dddx(config_.jerk_weight());    // 100.0 - 1000.0
+
+// 位置参考权重
+qp_problem.set_x_ref(config_.ref_s_weight(), x_ref);  // 10.0
+
+// 速度参考权重（可以是向量，每个点不同）
+std::vector<double> dx_ref(num_of_knots, cruise_speed);
+std::vector<double> dx_ref_weight(num_of_knots, config_.ref_v_weight());  // 10.0
+qp_problem.set_dx_ref(dx_ref_weight, dx_ref);
+
+// 曲率惩罚（动态计算）
+std::vector<double> penalty_dx;
+for (int i = 0; i < num_of_knots; ++i) {
+  double curr_t = i * delta_t;
+  SpeedPoint sp;
+  reference_speed_data.EvaluateByTime(curr_t, &sp);
+  PathPoint path_point = path_data.GetPathPointWithPathS(sp.s());
+  
+  // 曲率越大，惩罚越大
+  penalty_dx.push_back(std::fabs(path_point.kappa()) * config_.kappa_penalty_weight());
+}
+qp_problem.set_penalty_dx(penalty_dx);
+```
+
+#### 6.1.3 代价项的物理意义
+
+| 代价项 | 权重 | 物理意义 | 效果 |
+|--------|------|---------|------|
+| **位置跟踪** | w_s=10.0 | 鼓励车辆前进 | 尽量走得远 |
+| **速度跟踪** | w_v=10.0 | 保持巡航速度 | 稳定行驶 |
+| **曲率惩罚** | w_κ=100.0 | 弯道减速 | 安全转弯 |
+| **加速度** | w_a=100.0 | 减少加速度 | 舒适性 |
+| **Jerk** | w_j=1000.0 | 减少加加速度 | 平滑性⭐ |
+| **末端状态** | w_end=10.0 | 约束终点 | 平滑衔接 |
+
+**权重的相对重要性**：
+
+```
+w_jerk (1000.0) >> w_acc (100.0) >> w_v (10.0) ≈ w_s (10.0)
+   ↑                  ↑                ↑
+ 最重要            重要            一般重要
+ 
+决定平滑性      决定舒适性      决定效率
+```
+
+#### 6.1.4 曲率惩罚的作用
+
+曲率惩罚是一个关键设计：
+
+```cpp
+// 假设路径曲率变化：
+s=0-40m:  κ=0.0    → penalty=0     → 正常速度
+s=40-60m: κ=0.1    → penalty=10.0  → 轻微减速
+s=60-80m: κ=0.2    → penalty=20.0  → 明显减速
+s=80-100m:κ=0.0    → penalty=0     → 恢复速度
+```
+
+**效果**：车辆会在弯道处自动减速，无需显式规则。
+
+### 6.2 约束条件代码解析
+
+#### 6.2.1 约束矩阵维度
+
+```
+约束类型 | 数量 | 维度 | 说明
+---------|------|------|------
+变量边界 | 3n | 240 | s/v/a的上下界
+初始状态 | 3 | 3 | s_0/v_0/a_0固定
+速度连续性 | n-1 | 79 | v_{i+1}与v_i/a_i/a_{i+1}关系
+位置连续性 | n-1 | 79 | s_{i+1}与s_i/v_i/a_i/a_{i+1}关系
+Jerk约束 | n-1 | 79 | a_{i+1}-a_i的范围
+总计 | ~480 | 480 | 
+```
+
+#### 6.2.2 运动学约束推导
+
+**速度连续性**（梯形积分）：
+
+$$
+v_{i+1} = v_i + \int_{t_i}^{t_{i+1}} a(t) dt \approx v_i + \frac{a_i + a_{i+1}}{2} \Delta t
+$$
+
+**位置连续性**（Simpson积分）：
+
+$$
+s_{i+1} = s_i + \int_{t_i}^{t_{i+1}} v(t) dt
+$$
+
+其中：
+$$
+v(t) = v_i + a_i(t - t_i) + \frac{1}{2}\frac{a_{i+1} - a_i}{\Delta t}(t - t_i)^2
+$$
+
+积分得：
+$$
+s_{i+1} = s_i + v_i \Delta t + \frac{1}{3} a_i \Delta t^2 + \frac{1}{6} a_{i+1} \Delta t^2
+$$
+
+这就是代码中的连续性约束来源！
+
+### 6.3 完整的代码调用流程
+
+```cpp
+// 完整的速度规划QP求解流程
+
+// 1. 在SpeedBoundsDecider中准备ST图数据
+Status SpeedBoundsDecider::Process(...) {
+  // 计算ST边界和速度限制
+  st_graph_data->LoadData(boundaries, init_point, speed_limit, ...);
+}
+
+// 2. 在PiecewiseJerkSpeedOptimizer中求解
+Status PiecewiseJerkSpeedOptimizer::Process(...) {
+  // 2.1 获取ST图数据
+  const StGraphData& st_graph_data = reference_line_info_->st_graph_data();
+  
+  // 2.2 计算s边界（基于ST边界）
+  for (int i = 0; i < num_of_knots; ++i) {
+    for (const STBoundary* boundary : st_graph_data.st_boundaries()) {
+      // 根据边界类型调整s的上下界
+      if (boundary->boundary_type() == STOP) {
+        s_upper = min(s_upper, boundary->upper_s(t_i));
+      }
+    }
+    s_bounds[i] = {s_lower, s_upper};
+  }
+  
+  // 2.3 计算v边界（基于速度限制）
+  for (int i = 0; i < num_of_knots; ++i) {
+    double v_limit = speed_limit.GetSpeedLimitByS(s_i);
+    v_bounds[i] = {0.0, v_limit};
+  }
+  
+  // 2.4 计算参考值
+  x_ref = vector<double>(num_of_knots, total_length);  // 期望走完
+  dx_ref = vector<double>(num_of_knots, cruise_speed); // 期望巡航
+  
+  // 2.5 计算曲率惩罚
+  for (int i = 0; i < num_of_knots; ++i) {
+    penalty_dx[i] = |kappa(s_i)| * kappa_penalty_weight;
+  }
+  
+  // 2.6 创建并配置QP问题
+  PiecewiseJerkSpeedProblem qp(num_of_knots, delta_t, init_s);
+  qp.set_weight_ddx(acc_weight);
+  qp.set_weight_dddx(jerk_weight);
+  qp.set_x_ref(ref_s_weight, x_ref);
+  qp.set_dx_ref(ref_v_weight, dx_ref);
+  qp.set_penalty_dx(penalty_dx);
+  qp.set_x_bounds(s_bounds);
+  qp.set_dx_bounds(v_bounds);
+  qp.set_ddx_bounds(a_min, a_max);
+  qp.set_dddx_bound(jerk_bound);
+  
+  // 2.7 求解QP问题
+  qp.Optimize();  // 内部调用OSQP
+  
+  // 2.8 提取结果
+  opt_s = qp.opt_x();
+  opt_v = qp.opt_dx();
+  opt_a = qp.opt_ddx();
+  
+  // 2.9 构造SpeedData
+  for (int i = 0; i < num_of_knots; ++i) {
+    speed_data->AppendSpeedPoint(opt_s[i], i*delta_t, opt_v[i], opt_a[i], jerk_i);
+  }
+}
+```
+
+### 6.4 权重调参实战指南
+
+#### 6.4.1 调参目标
+
+| 目标 | 调整策略 | 示例 |
+|------|---------|------|
+| **更平滑** | 增大jerk_weight | 1000.0 → 2000.0 |
+| **更舒适** | 增大acc_weight | 100.0 → 500.0 |
+| **更快** | 增大ref_s_weight | 10.0 → 20.0 |
+| **稳定巡航** | 增大ref_v_weight | 10.0 → 20.0 |
+| **弯道更慢** | 增大kappa_penalty | 100.0 → 200.0 |
+
+#### 6.4.2 典型参数组合
+
+**舒适性优先**（乘用车）：
+```cpp
+acc_weight = 500.0      // 高
+jerk_weight = 2000.0    // 很高
+ref_v_weight = 10.0     // 中等
+kappa_penalty = 150.0   // 较高
+```
+
+**效率优先**（物流车）：
+```cpp
+acc_weight = 100.0      // 中等
+jerk_weight = 500.0     // 中等
+ref_v_weight = 20.0     // 高（保持速度）
+kappa_penalty = 50.0    // 较低（允许快速过弯）
+```
+
+**平衡配置**（默认）：
+```cpp
+acc_weight = 100.0
+jerk_weight = 1000.0
+ref_v_weight = 10.0
+kappa_penalty = 100.0
+```
+
+## 7. 主要模块详解
+
+### 7.1 SpeedBoundsDecider（速度边界决策器）
 
 **职责**：构建ST图并计算速度约束边界
 
@@ -898,7 +1581,7 @@ Status SpeedBoundsDecider::Process(Frame* frame,
 - 初始状态
 - 搜索范围
 
-### 6.2 PiecewiseJerkSpeedOptimizer（QP速度优化器）
+### 7.2 PiecewiseJerkSpeedOptimizer（QP速度优化器）
 
 **职责**：使用二次规划求解速度曲线
 
@@ -973,7 +1656,7 @@ Status PiecewiseJerkSpeedOptimizer::Process(const PathData& path_data,
 }
 ```
 
-### 6.3 PiecewiseJerkSpeedNonlinearOptimizer（NLP速度优化器）
+### 7.3 PiecewiseJerkSpeedNonlinearOptimizer（NLP速度优化器）
 
 **职责**：使用两阶段优化（QP+NLP）求解速度曲线
 
@@ -1088,7 +1771,7 @@ Status SetUpStatesAndBounds(const PathData& path_data,
 }
 ```
 
-### 6.4 PathTimeHeuristicOptimizer（动态规划优化器）
+### 7.4 PathTimeHeuristicOptimizer（动态规划优化器）
 
 **职责**：使用动态规划在ST图上搜索最优路径
 
@@ -1182,9 +1865,9 @@ Status GriddedPathTimeGraph::Search(SpeedData* speed_data) {
 }
 ```
 
-## 7. 配置参数
+## 8. 配置参数
 
-### 7.1 PiecewiseJerkSpeedOptimizer配置
+### 8.1 PiecewiseJerkSpeedOptimizer配置
 
 ```protobuf
 message PiecewiseJerkSpeedOptimizerConfig {
@@ -1204,7 +1887,7 @@ message PiecewiseJerkSpeedOptimizerConfig {
 }
 ```
 
-### 7.2 PiecewiseJerkSpeedNonlinearOptimizer配置
+### 8.2 PiecewiseJerkSpeedNonlinearOptimizer配置
 
 ```protobuf
 message PiecewiseJerkNonlinearSpeedOptimizerConfig {
@@ -1229,7 +1912,7 @@ message PiecewiseJerkNonlinearSpeedOptimizerConfig {
 }
 ```
 
-### 7.3 SpeedBoundsDecider配置
+### 8.3 SpeedBoundsDecider配置
 
 ```protobuf
 message SpeedBoundsDeciderConfig {
@@ -1250,7 +1933,7 @@ message SpeedBoundsDeciderConfig {
 }
 ```
 
-### 7.4 PathTimeHeuristic配置
+### 8.4 PathTimeHeuristic配置
 
 ```protobuf
 message SpeedHeuristicOptimizerConfig {
@@ -1274,13 +1957,13 @@ message SpeedHeuristicOptimizerConfig {
 }
 ```
 
-## 8. 调用流程
+## 9. 调用流程
 
-### 8.1 触发机制
+### 9.1 触发机制
 
 Apollo的速度规划采用**消息触发机制**，而非定时器触发：
 
-#### 8.1.1 消息驱动模式
+#### 9.1.1 消息驱动模式
 
 ```cpp
 // PlanningComponent定义
@@ -1301,7 +1984,7 @@ class PlanningComponent final
 - **融合输入**：同时获取最新的`Chassis`和`LocalizationEstimate`消息
 - **触发频率**：由Prediction模块的发布频率决定，通常为**10Hz**（100ms周期）
 
-#### 8.1.2 触发流程
+#### 9.1.2 触发流程
 
 ```
 1. Perception模块检测障碍物 → 发布PerceptionObstacles
@@ -1317,7 +2000,7 @@ class PlanningComponent final
 6. 发布ADCTrajectory给Control模块
 ```
 
-#### 8.1.3 周期时间参数
+#### 9.1.3 周期时间参数
 
 虽然采用消息触发，但代码中仍有周期时间参数：
 
@@ -1340,7 +2023,7 @@ std::vector<TrajectoryPoint> stitching_trajectory =
 - 预估下一帧的时间戳
 - 速度规划的时域设置
 
-#### 8.1.4 为什么使用消息触发而非定时器？
+#### 9.1.4 为什么使用消息触发而非定时器？
 
 **优点**：
 1. **数据同步**：保证规划使用最新的感知和预测结果
@@ -1353,7 +2036,7 @@ std::vector<TrajectoryPoint> stitching_trajectory =
 - **实际频率**：取决于上游模块的实际发布频率，可能略有波动
 - **最大频率限制**：由`FLAGS_planning_loop_rate`参数控制
 
-#### 8.1.5 其他触发条件
+#### 9.1.5 其他触发条件
 
 除了正常的消息触发，还有以下特殊触发条件：
 
@@ -1378,7 +2061,7 @@ if (pad_msg_.action() == PadMessage::CLEAR_PLANNING) {
 CheckRerouting();  // 检查并处理重路由请求
 ```
 
-### 8.2 整体调用链
+### 9.2 整体调用链
 
 ```
 消息到达触发:
@@ -1414,7 +2097,7 @@ OnLanePlanning::RunOnce()
 ADCTrajectory → planning_writer_->Write() → Control模块
 ```
 
-### 8.3 典型场景调用示例
+### 9.3 典型场景调用示例
 
 #### 场景1：正常巡航
 
@@ -1461,9 +2144,9 @@ ADCTrajectory → planning_writer_->Write() → Control模块
    - 满足舒适性约束
 ```
 
-## 9. 调试与可视化
+## 10. 调试与可视化
 
-### 9.1 调试信息
+### 10.1 调试信息
 
 Apollo提供了丰富的调试信息：
 
@@ -1483,14 +2166,14 @@ message STGraphDebug {
 }
 ```
 
-### 9.2 可视化工具
+### 10.2 可视化工具
 
 在DreamView中可以可视化：
 - **ST图**：显示障碍物边界和规划的速度曲线
 - **速度曲线**：显示速度、加速度、加加速度随时间的变化
 - **SL图**：显示路径和障碍物的横向关系
 
-### 9.3 日志记录
+### 10.3 日志记录
 
 关键日志点：
 ```cpp
@@ -1502,9 +2185,9 @@ AWARN << "NLP optimization failed, use QP result";
 AERROR << "Speed optimization failed: " << error_msg;
 ```
 
-## 10. 性能优化建议
+## 11. 性能优化建议
 
-### 10.1 计算效率
+### 11.1 计算效率
 
 1. **算法选择**：
    - 简单场景：PiecewiseJerkSpeedOptimizer（最快）
@@ -1520,7 +2203,7 @@ AERROR << "Speed optimization failed: " << error_msg;
    - 多条参考线并行规划
    - ST边界计算并行化
 
-### 10.2 解的质量
+### 11.2 解的质量
 
 1. **权重调整**：
    - 增大 jerk_weight 提高平滑性
@@ -1535,9 +2218,9 @@ AERROR << "Speed optimization failed: " << error_msg;
    - 使用上一帧结果作为初始值
    - 使用简单方法生成初始解
 
-## 11. 常见问题
+## 12. 常见问题
 
-### 11.1 优化失败
+### 12.1 优化失败
 
 **原因**：
 - ST边界过于严格，导致无可行解
