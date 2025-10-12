@@ -352,6 +352,7 @@ void OnLanePlanning::RunOnce(const LocalView& local_view, ADCTrajectory* const p
     }
 
     // 规划算法的入口
+    // /home/wwc/study/apollo_learn/docs/09_Decider/path_bounds_decider_cn.md
     status = Plan(start_timestamp, stitching_trajectory, ptr_trajectory_pb);
 
     // print trajxy
