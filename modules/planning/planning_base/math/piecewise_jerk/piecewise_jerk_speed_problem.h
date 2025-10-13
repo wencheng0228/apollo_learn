@@ -71,7 +71,9 @@ class PiecewiseJerkSpeedProblem : public PiecewiseJerkProblem {
 
   bool has_dx_ref_ = false;
   std::vector<double> dx_ref_;
+  // 参考速度的权重
   std::vector<double> weight_dx_ref_;
+  // 曲率惩罚的权重
   std::vector<double> penalty_dx_;
 };
 

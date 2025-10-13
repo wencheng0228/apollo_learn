@@ -169,6 +169,7 @@ Status PiecewiseJerkSpeedOptimizer::Process(const PathData& path_data,
     print_debug.AddPoint("sv_boundary_upper", path_s, v_upper_bound);
   }
   AdjustInitStatus(s_dot_bounds, delta_t, init_s);
+  // 速度规划类的构造
   PiecewiseJerkSpeedProblem piecewise_jerk_problem(num_of_knots, delta_t,
                                                    init_s);
   piecewise_jerk_problem.set_weight_ddx(config_.acc_weight());
