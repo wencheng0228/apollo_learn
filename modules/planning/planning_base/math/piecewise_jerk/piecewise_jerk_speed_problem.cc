@@ -61,18 +61,18 @@ void PiecewiseJerkSpeedProblem::CalculateKernel(std::vector<c_float>* P_data,
     int value_index = 0;
 
     // x(i)^2 * w_x_ref
-    // 构建参考位置相关的黑塞矩阵
+    // 构建参考位置相关的二次项系数矩阵P
     for (int i = 0; i < n - 1; ++i) {
         columns[i].emplace_back(i, weight_x_ref_ / (scale_factor_[0] * scale_factor_[0]));
         ++value_index;
     }
     // x(n-1)^2 * (w_x_ref + w_end_x)
-    // 构建参考位置+终点位置相关的黑塞矩阵
+    // 构建参考位置+终点位置相关的二次项系数矩阵P
     columns[n - 1].emplace_back(n - 1, (weight_x_ref_ + weight_end_state_[0]) / (scale_factor_[0] * scale_factor_[0]));
     ++value_index;
 
     // x(i)'^2 * (w_dx_ref + penalty_dx)
-    // 构建参考速度+曲率惩罚相关的黑塞矩阵
+    // 构建参考速度+曲率惩罚相关的二次项系数矩阵P
     for (int i = 0; i < n - 1; ++i) {
         columns[n + i].emplace_back(n + i,
                                     (weight_dx_ref_[i] + penalty_dx_[i]) / (scale_factor_[1] * scale_factor_[1]));
