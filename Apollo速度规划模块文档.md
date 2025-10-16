@@ -1321,6 +1321,7 @@ J = &\sum_{i=0}^{n-1} w_{s} (s_i - s_{ref,i})^2
     &&\text{← 末端加速度}
 \end{aligned}
 $$
+上边的目标函数不对，正确的应该是https://yvyl8zr2kmc.feishu.cn/wiki/E88wwfJj1i2eNKkaL5McZcgGnmg#share-XyoZd4EYSorVH6xkUAkcQMrWnLe
 
 #### 6.1.2 权重设置代码
 
