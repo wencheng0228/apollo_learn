@@ -334,6 +334,7 @@ void MPCController::LoadMPCGainScheduler() {
       << "Fail to load steer weight gain scheduler for MPC controller";
 }
 
+// MPC控制器的实现
 Status MPCController::ComputeControlCommand(
     const localization::LocalizationEstimate *localization,
     const canbus::Chassis *chassis,
