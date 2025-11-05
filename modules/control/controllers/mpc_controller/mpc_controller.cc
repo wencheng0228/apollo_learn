@@ -431,15 +431,20 @@ Status MPCController::ComputeControlCommand(
   debug->add_matrix_r_updated(matrix_r_updated_(0, 0));
   debug->add_matrix_r_updated(matrix_r_updated_(1, 1));
 
+  // 初始化为 controls_ * 1 的矩阵，元素为0
   Matrix control_matrix = Matrix::Zero(controls_, 1);
+  // 初始化为一个包含 horizon_ 个元素的Vec，并且每个元素的初始值为 control_matrix
   std::vector<Matrix> control(horizon_, control_matrix);
 
+  // 暂时不用关心
   Matrix control_gain_matrix = Matrix::Zero(controls_, basic_state_size_);
   std::vector<Matrix> control_gain(horizon_, control_gain_matrix);
 
+  // 暂时不用关心
   Matrix addition_gain_matrix = Matrix::Zero(controls_, 1);
   std::vector<Matrix> addition_gain(horizon_, addition_gain_matrix);
 
+  // 参考
   Matrix reference_state = Matrix::Zero(basic_state_size_, 1);
   std::vector<Matrix> reference(horizon_, reference_state);
 
