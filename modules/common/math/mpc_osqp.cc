@@ -58,6 +58,7 @@ void MpcOsqp::CalculateKernel(std::vector<c_float>* P_data,
                               std::vector<c_int>* P_indices,
                               std::vector<c_int>* P_indptr) {
     // col1:(row,val),...; col2:(row,val),....; ...
+    // columns是存放所有非零元素的列索引、行索引和数值，用于构建CSC格式的稀疏矩阵
     std::vector<std::vector<std::pair<c_int, c_float>>> columns;
     columns.resize(num_param_);
     size_t value_index = 0;
@@ -79,8 +80,32 @@ void MpcOsqp::CalculateKernel(std::vector<c_float>* P_data,
             ++value_index;
         }
     }
+    /**
+     * 假设状态变量(x, y)数量为2，控制状态(a)数量为1，预测周期为2，那么 columns 的大小为5，示例为：
+     * columns = [[0, q_x],[1, q_y],[2, q_x],[3, q_y],[4, q_x],[5, q_y],[6, r_a],[7, r_a]]
+     */
     CHECK_EQ(value_index, num_param_);
 
+    /**
+     * P_data：按列存放所有的非零元素
+     * P_indices：所有非零元素所在的行的索引
+     * P_indptr：所有元素所在的列在P_data中的索引（非常拗口且TM的抽象）
+     *
+     * 假设一个矩阵是：
+     * [0   0   5   0   0   12   0
+     *  11  0   0   0   0   0   77
+     *  22  0   6   0   88  0   88
+     *  33  0   0   0   99  0   0
+     *  0   0   7   0   0   13  0
+     *  44  0   0   0   0   0   99
+     *  0   0   8   0   0   14  111
+     *  55  0   9   0   0   0   0]
+     *
+     * 那么:
+     * P_data =    [11, 22, 33, 44, 55, 5, 6, 7, 8, 9, 88, 99, 12, 13, 14, 77, 88, 99, 111]
+     * P_indices = [1, 2, 3, 5, 7, 0, 2, 4, 6, 7, 2, 3, 0, 4, 6, 1, 2, 5, 6]
+     * P_indptr =  [0, 5, 5, 10, 10, 12, 15, 19]
+     */
     int ind_p = 0;
     for (size_t i = 0; i < num_param_; ++i) {
         // TODO(SHU) Check this
@@ -238,6 +263,9 @@ OSQPData* MpcOsqp::Data() {
         ADEBUG << "before CalculateKernel";
         CalculateKernel(&P_data, &P_indices, &P_indptr);
         ADEBUG << "CalculateKernel done";
+        // csc_matrix
+        // 中保存的是指针，而P_data是局部变量，如果直接用P_data的地址的话，在整个Data函数返回后P_data就被释放了，就会导致程序崩溃。所以使用CopyData
+        // 函数，将局部变量复制到堆上并返回一个指向堆上的指针，以保证在Data函数返回后程序不会崩溃
         data->P = csc_matrix(kernel_dim, kernel_dim, P_data.size(), CopyData(P_data), CopyData(P_indices),
                              CopyData(P_indptr));
         ADEBUG << "Get P matrix";

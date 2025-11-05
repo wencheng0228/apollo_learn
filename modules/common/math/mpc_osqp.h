@@ -60,6 +60,12 @@ public:
     bool Solve(std::vector<double>* control_cmd);
 
 private:
+    /**
+     * 构造二次规划中的P矩阵
+     * P_data: 非零元素的值
+     * P_indices: 非零元素的行索引
+     * P_indptr: 每列在 P_data 中的起始位置
+     */
     void CalculateKernel(std::vector<c_float>* P_data, std::vector<c_int>* P_indices, std::vector<c_int>* P_indptr);
     void CalculateEqualityConstraint(std::vector<c_float>* A_data,
                                      std::vector<c_int>* A_indices,
@@ -71,6 +77,7 @@ private:
     OSQPData* Data();
     void FreeData(OSQPData* data);
 
+    // 在堆上分配一块内存，然后将传入的vec复制过来再返回，这样可以延长数据的生命周期
     template <typename T>
     T* CopyData(const std::vector<T>& vec) {
         T* data = new T[vec.size()];
@@ -81,8 +88,8 @@ private:
 private:
     Eigen::MatrixXd matrix_a_;
     Eigen::MatrixXd matrix_b_;
-    Eigen::MatrixXd matrix_q_;
-    Eigen::MatrixXd matrix_r_;
+    Eigen::MatrixXd matrix_q_;  // 状态权重矩阵，6 x 6
+    Eigen::MatrixXd matrix_r_;  // 控制权重矩阵
     Eigen::MatrixXd matrix_initial_x_;
     const Eigen::MatrixXd matrix_u_lower_;
     const Eigen::MatrixXd matrix_u_upper_;
@@ -94,7 +101,7 @@ private:
     double eps_abs_;
     size_t state_dim_;    // 6
     size_t control_dim_;  // 2
-    size_t num_param_;
+    size_t num_param_;    // 决策变量的总维数
     int num_constraint_;
     Eigen::VectorXd gradient_;
     Eigen::VectorXd lowerBound_;  // 初始状态约束+上下界不等式约束
