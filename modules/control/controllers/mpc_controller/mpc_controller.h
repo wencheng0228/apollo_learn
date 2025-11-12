@@ -191,7 +191,7 @@ protected:
 
     const int horizon_ = 10;  // 默认值为10
     // vehicle state matrix
-    Eigen::MatrixXd matrix_a_;  // 6x6
+    Eigen::MatrixXd matrix_a_;  // 6x6，状态矩阵中不变的部分
     // vehicle state matrix (discrete-time)
     Eigen::MatrixXd matrix_ad_;  // 6x6
 
@@ -216,6 +216,7 @@ protected:
     // updated state weighting matrix
     Eigen::MatrixXd matrix_q_updated_;
     // vehicle state matrix coefficients
+    // 状态矩阵中变化的部分，跟速度相关。在UpdateMatrix()函数中除以速度然后赋值给 matrix_a_
     Eigen::MatrixXd matrix_a_coeff_;
     // 4 by 1 matrix; state matrix
     Eigen::MatrixXd matrix_state_;
